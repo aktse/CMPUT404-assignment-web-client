@@ -21,6 +21,7 @@
 import sys
 import socket
 import re
+import select
 # you may use urllib to encode data appropriately
 import urllib
 
@@ -37,37 +38,128 @@ class HTTPClient(object):
 
     def connect(self, host, port):
         # use sockets!
-        return None
+        so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ip = socket.gethostbyname(host)
+        so.connect((ip, port))
+        return so
 
     def get_code(self, data):
-        return None
+        # Status code
+        code = data[0:20].split(" ")[1]
+        return int(code)
 
     def get_headers(self,data):
-        return None
+        # Return everything before the empty line
+        lines = data.splitlines(True)
+        header = ""
+        for line in lines:
+            if line == "\n" or line == "\r\n":
+                break
+            else:
+                header += line
+        return header
 
     def get_body(self, data):
-        return None
+        # Return everything after the empty line
+        lines = data.splitlines(True)
+        body = ""
+        found = False
+        for line in lines:
+            if line == "\n" or line == "\r\n":
+                found = True
+            elif found:
+                body += line
+        return body
 
     # read everything from the socket
     def recvall(self, sock):
         buffer = bytearray()
-        done = False
-        while not done:
-            part = sock.recv(1024)
-            if (part):
-                buffer.extend(part)
+        while True:
+            r, w, e = select.select([sock], [], [], 1)
+            if (len(r) > 0):
+                part = sock.recv(1024)
+                if (part):
+                    buffer.extend(part)
+                else:
+                    break
             else:
-                done = not part
+                break
         return str(buffer)
 
+    def parseGET(self, url):
+
+        # Get hostname and port
+        delim = ('/')
+        start = url.find('://') + 3
+        ending = len(url) 
+
+        first = url.find(delim, start)     
+        if first >= 0:                    
+            ending = min(ending, first) 
+
+        # Check if port is supplied
+        if ':' in url[start:ending]:
+            parsed = url[start:ending].rpartition(':')
+            # host
+            host = parsed[0]
+            # port
+            port = parsed[-1]
+        else:
+            # host 
+            host = url[start:ending] 
+            # Use https
+            if 'https' in url:   
+                port = 443
+            else: # Use http 
+                port = 80
+
+        uri = url[ending:]
+        # default URI
+        if uri == '':
+            uri = '/'
+
+        return (host, int(port), uri)
+
+    def parsePOST(self, url, args):
+
+        (host, port, uri) = self.parseGET(url)
+        # Process URI into uri and payload
+        if isinstance(args, dict):
+            payload = urllib.urlencode(args)
+        else: # a string 
+            s = uri.split('?')
+            uri = s[0]
+            # Payload was passed
+            if len(s) > 1:
+                payload = s[1]
+            else: # No args
+                payload = ""
+        return (host, port, uri, payload)
+
     def GET(self, url, args=None):
-        code = 500
-        body = ""
+        (host, port, uri) = self.parseGET(url)
+        so = self.connect(host, port)
+        # Make request
+        so.send("GET %s HTTP/1.1\r\n" % uri)
+        so.send("Host: %s \r\n\r\n" % host)
+        data = self.recvall(so)
+        code = self.get_code(data)
+        body = self.get_body(data)
+        so.close()
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
+        (host, port, uri, payload) = self.parsePOST(url, args)
+        so = self.connect(host, port)
+        # Make request
+        so.send("POST %s HTTP/1.1\r\n" % uri)
+        so.send("Host: %s\r\n" % host)
+        so.send("Content-Type: application/x-www-form-urlencoded\r\n")
+        so.send("Content-Length: %d\r\n\r\n" % len(payload))
+        so.send(payload)
+        data = self.recvall(so)
+        code = self.get_code(data)
+        body = self.get_body(data)
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):
@@ -78,7 +170,6 @@ class HTTPClient(object):
     
 if __name__ == "__main__":
     client = HTTPClient()
-    command = "GET"
     if (len(sys.argv) <= 1):
         help()
         sys.exit(1)
