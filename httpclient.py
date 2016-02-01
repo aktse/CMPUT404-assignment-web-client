@@ -71,19 +71,15 @@ class HTTPClient(object):
                 body += line
         return body
 
-    # read everything from the socket
     def recvall(self, sock):
         buffer = bytearray()
-        while True:
-            r, w, e = select.select([sock], [], [], 1)
-            if (len(r) > 0):
-                part = sock.recv(1024)
-                if (part):
-                    buffer.extend(part)
-                else:
-                    break
+        done = False
+        while not done:
+            part = sock.recv(1024)
+            if (part):
+                buffer.extend(part)
             else:
-                break
+                done = not part
         return str(buffer)
 
     def parseGET(self, url):
@@ -141,7 +137,8 @@ class HTTPClient(object):
         so = self.connect(host, port)
         # Make request
         so.send("GET %s HTTP/1.1\r\n" % uri)
-        so.send("Host: %s \r\n\r\n" % host)
+        so.send("Host: %s \r\n" % host)
+        so.send("Connection: close\r\n\r\n")
         data = self.recvall(so)
         code = self.get_code(data)
         body = self.get_body(data)
@@ -154,6 +151,7 @@ class HTTPClient(object):
         # Make request
         so.send("POST %s HTTP/1.1\r\n" % uri)
         so.send("Host: %s\r\n" % host)
+        so.send("Connection: close\r\n")
         so.send("Content-Type: application/x-www-form-urlencoded\r\n")
         so.send("Content-Length: %d\r\n\r\n" % len(payload))
         so.send(payload)
